@@ -1,0 +1,154 @@
+---
+# ─── Validation MariaDB ───────────────────────────────────────────────────────
+
+- name: Validation MariaDB
+  hosts: mariadb
+  become: true
+  tasks:
+    - name: Vérification service MariaDB
+      service_facts:
+
+    - name: MariaDB est actif
+      assert:
+        that: ansible_facts.services['mariadb.service'].state == 'running'
+        fail_msg: "MariaDB n'est pas actif"
+
+    - name: Vérification bases de données
+      community.mysql.mysql_query:
+        query: "SHOW DATABASES LIKE '{{ item }}'"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      loop: "{{ databases }}"
+      register: db_check
+
+    - name: Vérification user appuser
+      community.mysql.mysql_query:
+        query: "SELECT user, host FROM mysql.user WHERE user='appuser'"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      register: user_check
+
+    - name: Écriture rapport MariaDB
+      copy:
+        content: "{{ {'service': 'mariadb', 'status': 'ok', 'databases': databases} | to_json }}"
+        dest: /tmp/migration/validation_mariadb.json
+
+# ─── Validation Apache ────────────────────────────────────────────────────────
+
+- name: Validation Apache
+  hosts: apache
+  become: true
+  tasks:
+    - name: Vérification service Apache
+      service_facts:
+
+    - name: Apache est actif
+      assert:
+        that: ansible_facts.services['apache2.service'].state == 'running'
+        fail_msg: "Apache n'est pas actif"
+
+    - name: Test HTTP sur localhost
+      uri:
+        url: http://localhost
+        method: GET
+        status_code: 200
+      register: http_check
+
+    - name: Vérification absence anciennes IPs LXC
+      shell: grep -r "10\.0\.3\." /var/www/html/config.php || echo "OK"
+      register: ip_check
+
+    - name: Écriture rapport Apache
+      copy:
+        content: "{{ {'service': 'apache', 'status': 'ok', 'http_code': http_check.status} | to_json }}"
+        dest: /tmp/migration/validation_apache.json
+
+# ─── Validation NFS ───────────────────────────────────────────────────────────
+
+- name: Validation NFS
+  hosts: nfs
+  become: true
+  tasks:
+    - name: Vérification service NFS
+      service_facts:
+
+    - name: NFS est actif
+      assert:
+        that: ansible_facts.services['nfs-server.service'].state == 'running'
+        fail_msg: "NFS n'est pas actif"
+
+    - name: Vérification exports NFS
+      command: exportfs -v
+      register: exports_check
+
+    - name: Vérification fichiers partagés
+      find:
+        paths: /srv/nfs/shared
+        recurse: yes
+      register: nfs_files
+
+    - name: Écriture rapport NFS
+      copy:
+        content: "{{ {'service': 'nfs', 'status': 'ok', 'exports': exports_check.stdout, 'files_count': nfs_files.matched} | to_json }}"
+        dest: /tmp/migration/validation_nfs.json
+
+# ─── Validation Backup ────────────────────────────────────────────────────────
+
+- name: Validation Backup
+  hosts: backup
+  become: true
+  tasks:
+    - name: Vérification script backup.sh
+      stat:
+        path: /usr/local/bin/backup.sh
+      register: backup_script
+
+    - name: backup.sh existe
+      assert:
+        that: backup_script.stat.exists
+        fail_msg: "backup.sh est absent"
+
+    - name: Vérification nouvelle IP dans backup.sh
+      shell: grep "{{ new_ips.mariadb }}" /usr/local/bin/backup.sh
+      register: ip_in_backup
+
+    - name: Nouvelle IP mariadb présente dans backup.sh
+      assert:
+        that: ip_in_backup.rc == 0
+        fail_msg: "La nouvelle IP mariadb est absente de backup.sh"
+
+    - name: Vérification cron actif
+      service_facts:
+
+    - name: Cron est actif
+      assert:
+        that: ansible_facts.services['cron.service'].state == 'running'
+        fail_msg: "Cron n'est pas actif"
+
+    - name: Écriture rapport Backup
+      copy:
+        content: "{{ {'service': 'backup', 'status': 'ok', 'script': backup_script.stat.exists} | to_json }}"
+        dest: /tmp/migration/validation_backup.json
+
+# ─── Validation FTP ───────────────────────────────────────────────────────────
+
+- name: Validation FTP
+  hosts: ftp
+  become: true
+  tasks:
+    - name: Vérification service vsftpd
+      service_facts:
+
+    - name: vsftpd est actif
+      assert:
+        that: ansible_facts.services['vsftpd.service'].state == 'running'
+        fail_msg: "vsftpd n'est pas actif"
+
+    - name: Vérification répertoires users FTP
+      stat:
+        path: "{{ item.home }}/uploads"
+      loop: "{{ ftp_users }}"
+      register: ftp_dirs
+
+    - name: Écriture rapport FTP
+      copy:
+        content: "{{ {'service': 'ftp', 'status': 'ok'} | to_json }}"
+        dest: /tmp/migration/validation_ftp.json

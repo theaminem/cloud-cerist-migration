@@ -1,0 +1,267 @@
+---
+# ─── Restauration MariaDB ─────────────────────────────────────────────────────
+
+- name: Restauration MariaDB
+  hosts: mariadb
+  become: true
+  tasks:
+    - name: Création du répertoire de staging
+      file:
+        path: "{{ staging_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Restauration des bases de données
+      community.mysql.mysql_db:
+        name: "{{ item }}"
+        state: import
+        target: "{{ staging_dir }}/{{ item }}.sql"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      loop: "{{ databases }}"
+
+    - name: Suppression ancien user appuser@ancienne_ip
+      community.mysql.mysql_user:
+        name: appuser
+        host: "{{ old_apache_ip }}"
+        state: absent
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Création user appuser avec nouvelle IP apache
+      community.mysql.mysql_user:
+        name: appuser
+        host: "{{ new_ips.apache }}"
+        password: "{{ mariadb_appuser_password }}"
+        priv: "*.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Création user appuser@%
+      community.mysql.mysql_user:
+        name: appuser
+        host: "%"
+        password: "{{ mariadb_appuser_password }}"
+        priv: "*.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Flush privileges
+      community.mysql.mysql_query:
+        query: "FLUSH PRIVILEGES"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+# ─── Restauration Apache ──────────────────────────────────────────────────────
+
+- name: Restauration Apache
+  hosts: apache
+  become: true
+  tasks:
+    - name: Création du répertoire de staging
+      file:
+        path: "{{ staging_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Décompression archive web
+      unarchive:
+        src: "{{ staging_dir }}/html.tar.gz"
+        dest: /var/www/
+        remote_src: yes
+
+    - name: Décompression config Apache
+      unarchive:
+        src: "{{ staging_dir }}/apache2.tar.gz"
+        dest: /etc/
+        remote_src: yes
+
+    - name: Remplacement IP mariadb dans config.php
+      replace:
+        path: /var/www/html/config.php
+        regexp: '\b10\.0\.3\.10\b'
+        replace: "{{ new_ips.mariadb }}"
+
+    - name: Remplacement IP apache dans config.php
+      replace:
+        path: /var/www/html/config.php
+        regexp: '\b10\.0\.3\.20\b'
+        replace: "{{ new_ips.apache }}"
+
+    - name: Remplacement IP backup dans config.php
+      replace:
+        path: /var/www/html/config.php
+        regexp: '\b10\.0\.3\.30\b'
+        replace: "{{ new_ips.backup }}"
+
+    - name: Remplacement IP ftp dans config.php
+      replace:
+        path: /var/www/html/config.php
+        regexp: '\b10\.0\.3\.40\b'
+        replace: "{{ new_ips.ftp }}"
+
+    - name: Remplacement IP nfs dans config.php
+      replace:
+        path: /var/www/html/config.php
+        regexp: '\b10\.0\.3\.50\b'
+        replace: "{{ new_ips.nfs }}"
+
+    - name: Écriture /etc/hosts avec IPs internes
+      blockinfile:
+        path: /etc/hosts
+        block: |
+          {{ new_ips.mariadb }} mariadb.migration.local
+          {{ new_ips.apache }}  apache.migration.local
+          {{ new_ips.backup }}  backup.migration.local
+          {{ new_ips.ftp }}     ftp.migration.local
+          {{ new_ips.nfs }}     nfs.migration.local
+
+    - name: Redémarrage Apache
+      service:
+        name: apache2
+        state: restarted
+
+# ─── Restauration NFS ─────────────────────────────────────────────────────────
+
+- name: Restauration NFS
+  hosts: nfs
+  become: true
+  tasks:
+    - name: Création du répertoire de staging
+      file:
+        path: "{{ staging_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Création structure NFS
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /srv/nfs/shared/documents
+        - /srv/nfs/shared/scripts
+
+    - name: Décompression archive NFS
+      unarchive:
+        src: "{{ staging_dir }}/nfs_shared.tar.gz"
+        dest: /srv/nfs/
+        remote_src: yes
+
+    - name: Réécriture /etc/exports avec nouveau sous-réseau
+      copy:
+        content: "/srv/nfs/shared {{ internal_subnet }}(rw,sync,no_subtree_check,no_root_squash)\n"
+        dest: /etc/exports
+
+    - name: Activation des exports NFS
+      command: exportfs -ra
+
+    - name: Redémarrage NFS
+      service:
+        name: nfs-kernel-server
+        state: restarted
+
+# ─── Restauration Backup ──────────────────────────────────────────────────────
+
+- name: Restauration Backup
+  hosts: backup
+  become: true
+  tasks:
+    - name: Création du répertoire de destination des backups
+      file:
+        path: /backups
+        state: directory
+        mode: '0755'
+
+    - name: Dépôt backup.sh avec nouvelle IP mariadb
+      copy:
+        content: |
+          #!/bin/bash
+          DATE=$(date +%Y-%m-%d_%Hh%M)
+          HOST="{{ new_ips.mariadb }}"
+          USER="appuser"
+          PASS="{{ mariadb_appuser_password }}"
+          DB="app_db"
+          DEST="/backups"
+          mysqldump -h $HOST -u $USER -p$PASS $DB > $DEST/backup_$DATE.sql
+          if [ $? -eq 0 ]; then
+              echo "Backup reussi : $DEST/backup_$DATE.sql"
+          else
+              echo "Backup echoue"
+          fi
+        dest: /usr/local/bin/backup.sh
+        mode: '0750'
+
+    - name: Création du cron backup
+      cron:
+        name: "backup quotidien"
+        minute: "0"
+        hour: "2"
+        job: "/usr/local/bin/backup.sh"
+        user: root
+
+# ─── Restauration FTP ─────────────────────────────────────────────────────────
+
+- name: Restauration FTP
+  hosts: ftp
+  become: true
+  tasks:
+    - name: Création des users FTP
+      user:
+        name: "{{ item.username }}"
+        home: "{{ item.home }}"
+        shell: /bin/bash
+        create_home: yes
+        state: present
+      loop: "{{ ftp_users }}"
+
+    - name: Injection des hashes de passwords
+      user:
+        name: "{{ item.username }}"
+        password: "{{ item.password_hash }}"
+        update_password: always
+      loop: "{{ ftp_users }}"
+
+    - name: Création des répertoires uploads
+      file:
+        path: "{{ item.home }}/uploads"
+        state: directory
+        owner: "{{ item.username }}"
+        mode: '0755'
+      loop: "{{ ftp_users }}"
+
+    - name: Décompression archives FTP
+      unarchive:
+        src: "{{ staging_dir }}/ftp_{{ item.username }}.tar.gz"
+        dest: "{{ item.home }}/"
+        remote_src: yes
+        owner: "{{ item.username }}"
+      loop: "{{ ftp_users }}"
+      ignore_errors: yes
+
+    - name: Configuration vsftpd
+      copy:
+        content: |
+          listen=NO
+          listen_ipv6=YES
+          anonymous_enable=NO
+          local_enable=YES
+          write_enable=YES
+          local_umask=022
+          dirmessage_enable=YES
+          use_localtime=YES
+          xferlog_enable=YES
+          connect_from_port_20=YES
+          chroot_local_user={{ 'YES' if vsftpd_config.chroot_local_user else 'NO' }}
+          allow_writeable_chroot=YES
+          secure_chroot_dir=/var/run/vsftpd/empty
+          pam_service_name=vsftpd
+          rsa_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+          rsa_private_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+          ssl_enable=NO
+          pasv_enable=YES
+          pasv_min_port={{ vsftpd_config.pasv_min_port }}
+          pasv_max_port={{ vsftpd_config.pasv_max_port }}
+        dest: /etc/vsftpd.conf
+
+    - name: Redémarrage vsftpd
+      service:
+        name: vsftpd
+        state: restarted

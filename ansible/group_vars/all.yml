@@ -1,0 +1,19 @@
+# ─── Variables communes à toutes les instances ────────────────────────────────
+
+ansible_user: ubuntu
+ansible_ssh_private_key_file: ~/.ssh/migration_key
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+# Répertoire de staging des archives sur les instances
+staging_dir: /tmp/migration
+
+# Sous-réseau interne OpenStack
+internal_subnet: "10.10.10.0/24"
+
+# Mapping des nouvelles IPs internes
+new_ips:
+  mariadb: "10.10.10.10"
+  apache:  "10.10.10.20"
+  backup:  "10.10.10.30"
+  ftp:     "10.10.10.40"
+  nfs:     "10.10.10.50"
