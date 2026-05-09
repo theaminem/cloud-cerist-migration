@@ -497,7 +497,7 @@ def generer_rapport(state: State, instances: dict):
     rapport = {
         "migration_date": datetime.now().isoformat(),
         "status": "success",
-        "duree_secondes": (datetime.now() - datetime.fromisoformat(state.debut)).seconds,
+        "duree_secondes": (datetime.now() - datetime.fromisoformat(state.debut)).total_seconds(),
         "instances": {},
     }
 

@@ -71,11 +71,14 @@
       service_facts:
     
     - name: NFS est actif
+      command: exportfs -v
+      register: nfs_exports_check
+      changed_when: false
+
+    - name: NFS exporte au moins un repertoire
       assert:
-        that: >
-          ansible_facts.services['nfs-server.service'].state == 'running' or
-          ansible_facts.services['nfs-server.service'].state == 'stopped'
-        fail_msg: "NFS n'est pas actif"
+        that: nfs_exports_check.stdout | length > 0
+        fail_msg: "NFS n'exporte rien"
 
     - name: Vérification exports NFS
       command: exportfs -v
