@@ -189,10 +189,10 @@ instances = {{
     tfvars_path.write_text(tfvars)
 
 
-def phase_provisioning(state: State, credentials: dict):
+def phase_provisioning(state: State, credentials: dict, containers: list):
     titre("4", "9", "Provisioning Terraform")
 
-    generer_tfvars([], credentials)
+    generer_tfvars(containers, credentials)
 
     info("terraform init...")
     r = executer_cmd(["terraform", "init", "-no-color"], cwd=TERRAFORM_DIR)
@@ -420,7 +420,9 @@ def phase_transfert(instances: dict, tmp_dir: str, state: State):
                 else:
                     raise e
         
-        client.exec_command("mkdir -p /tmp/migration")
+        _, _, stderr = client.exec_command("mkdir -p /tmp/migration")
+        if stderr.read():
+            raise Exception(f"mkdir /tmp/migration echoue sur {floating_ip}")
         sftp = client.open_sftp()
 
         for fichier in fichiers:
@@ -510,7 +512,7 @@ def generer_rapport(state: State, instances: dict):
             "old_lxc_ip":   lxc_ip,
             "internal_ip":  data["internal_ip"],
             "floating_ip":  data["floating_ip"],
-            "validation":   "passed"
+            "validation":   "passed" if Phase.VALIDATE in [Phase[p] for p in state.phases_ok] else "skipped"
         }
         print(f"  {nom:<12} {lxc_ip:<16} {data['internal_ip']:<16} {data['floating_ip']:<16}")
 
@@ -539,7 +541,7 @@ def main():
             containers = scanner_containers()
 
         if state.phase.value <= Phase.PROVISIONING.value:
-            instances = phase_provisioning(state, credentials)
+            instances = phase_provisioning(state, credentials, containers)
             generer_inventaire(instances, containers)
         else:
             r = executer_cmd(["terraform", "output", "-json"], cwd=TERRAFORM_DIR)

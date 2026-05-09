@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -24,7 +25,7 @@ class Phase(Enum):
 
 class State:
 
-    FICHIER = os.path.expanduser("~/PFE-migration/migration_state.json")
+    FICHIER = str(Path(__file__).parent.parent / "migration_state.json")
 
     def __init__(self):
         self.phase         : Phase              = Phase.SCAN

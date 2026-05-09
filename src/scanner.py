@@ -78,7 +78,7 @@ class Container(BaseModel):
     @field_validator("ip")
     @classmethod
     def ip_valide(cls, v):
-        if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', v):
+        if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', v) or not all(0 <= int(p) <= 255 for p in v.split('.')):
             raise ValueError(f"IP invalide : {v}")
         return v
 
@@ -210,11 +210,11 @@ def lire_exports_nfs(nom: str) -> List[NFSExport]:
             continue
         path  = parties[0]
         reste = parties[1]
-        if "(" in reste:
+        if "(" in reste and ")" in reste:
             subnet  = reste[:reste.index("(")]
             options = reste[reste.index("(")+1:reste.index(")")]
         else:
-            subnet  = reste
+            subnet  = reste.split("(")[0]
             options = ""
         exports.append(NFSExport(path=path, subnet=subnet, options=options))
     return exports
@@ -294,6 +294,10 @@ def scanner_containers() -> List[Container]:
     containers = []
 
     sortie = executer(["sudo", "lxc-ls", "--running"])
+
+    sortie_stopped = executer(["sudo", "lxc-ls", "--stopped"])
+    if sortie_stopped.strip():
+        print(f"  AVERTISSEMENT: containers arretes ignores: {sortie_stopped.strip()}")
     noms   = sortie.split()
 
     for nom in noms:
