@@ -7,6 +7,7 @@ import tempfile
 import shutil
 import time
 import paramiko
+import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +19,9 @@ from state import State, Phase
 BASE_DIR      = Path(__file__).parent.parent
 TERRAFORM_DIR = BASE_DIR / "terraform"
 ANSIBLE_DIR   = BASE_DIR / "ansible"
-SSH_KEY       = Path.home() / ".ssh" / "migration_key"
+
+CONFIG  = yaml.safe_load((BASE_DIR / "config.yml").open())
+SSH_KEY = Path(CONFIG["ssh"]["key_path"]).expanduser()
 
 
 # ─── Affichage ────────────────────────────────────────────────────────────────
@@ -60,7 +63,7 @@ def attendre_ssh(ip: str, timeout: int = 120):
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(
                 hostname=ip,
-                username="ubuntu",
+                username=CONFIG["ssh"]["user"],
                 key_filename=str(SSH_KEY),
                 timeout=5
             )
@@ -96,7 +99,7 @@ def verifier_prerequis():
         fail("cle SSH")
         erreurs.append("ssh_key")
 
-    r = executer_cmd(["ping", "-c", "1", "-W", "2", "10.0.0.10"])
+    r = executer_cmd(["ping", "-c", "1", "-W", "2", CONFIG["network"]["api_ip"]])
     if r.returncode == 0:
         ok("vm-cible (OpenStack)")
     else:
@@ -114,8 +117,10 @@ def collecter_credentials() -> dict:
     titre("2", "9", "Collecte des credentials")
     print("  Les credentials ne seront jamais affiches ni logges.\n")
 
-    os_username = input("  Utilisateur OpenStack [migration-user] : ").strip() or "migration-user"
-    os_project  = input("  Projet OpenStack [migration] : ").strip() or "migration"
+    default_user    = CONFIG["openstack"]["default_user"]
+    default_project = CONFIG["openstack"]["default_project"]
+    os_username = input(f"  Utilisateur OpenStack [{default_user}] : ").strip() or default_user
+    os_project  = input(f"  Projet OpenStack [{default_project}] : ").strip() or default_project
 
     return {
         "os_username":           os_username,
@@ -146,39 +151,27 @@ def phase_scan(state: State) -> list:
 # ─── Phase Terraform ──────────────────────────────────────────────────────────
 
 def generer_tfvars(containers: list, credentials: dict):
-    ip_map = {
-        "mariadb": "10.10.10.10",
-        "apache":  "10.10.10.20",
-        "backup":  "10.10.10.30",
-        "ftp":     "10.10.10.40",
-        "nfs":     "10.10.10.50",
-    }
+    cfg_svc = CONFIG["services"]
+    cfg_net = CONFIG["network"]
+    cfg_os  = CONFIG["openstack"]
 
-    flavor_map = {
-        "mariadb": "m1.mariadb",
-        "apache":  "m1.apache",
-        "backup":  "m1.backup",
-        "ftp":     "m1.ftp",
-        "nfs":     "m1.nfs",
-    }
-
-    ssh_pub_key = (Path.home() / ".ssh" / "migration_key.pub").read_text().strip()
+    ssh_pub_key = Path(CONFIG["ssh"]["key_path"] + ".pub").expanduser().read_text().strip()
 
     instances_hcl = ""
-    for nom, ip in ip_map.items():
-        instances_hcl += f'  {nom} = {{ internal_ip = "{ip}", flavor = "{flavor_map[nom]}" }}\n'
+    for nom, svc in cfg_svc.items():
+        instances_hcl += f'  {nom} = {{ internal_ip = "{svc["internal_ip"]}", flavor = "{svc["flavor"]}" }}\n'
 
-    tfvars = f"""os_auth_url     = "http://10.0.0.10:5000/v3"
+    tfvars = f"""os_auth_url     = "{cfg_os['auth_url']}"
 os_username     = "{credentials['os_username']}"
 os_password     = "{credentials['os_password']}"
 os_project_name = "{credentials['os_project']}"
-os_region       = "RegionOne"
+os_region       = "{cfg_os['region']}"
 
-provider_network       = "provider"
-migration_network_cidr = "10.10.10.0/24"
-migration_gateway      = "10.10.10.1"
+provider_network       = "{cfg_net['provider']}"
+migration_network_cidr = "{cfg_net['internal_cidr']}"
+migration_gateway      = "{cfg_net['internal_gateway']}"
 
-image_name     = "ubuntu-22.04"
+image_name     = "{CONFIG['image']['name']}"
 ssh_public_key = "{ssh_pub_key}"
 
 instances = {{
@@ -215,13 +208,7 @@ def phase_provisioning(state: State, credentials: dict, containers: list):
     outputs = json.loads(r.stdout)
     instances = outputs["instances"]["value"]
 
-    lxc_ips = {
-        "mariadb": "10.0.3.10",
-        "apache":  "10.0.3.20",
-        "backup":  "10.0.3.30",
-        "ftp":     "10.0.3.40",
-        "nfs":     "10.0.3.50",
-    }
+    lxc_ips = {nom: svc["lxc_ip"] for nom, svc in CONFIG["services"].items()}
 
     for nom, data in instances.items():
         state.enregistrer_ip(
@@ -255,18 +242,37 @@ def phase_provisioning(state: State, credentials: dict, containers: list):
 
 # ─── Phase Inventaire Ansible ─────────────────────────────────────────────────
 
+def generer_group_vars():
+    cfg = CONFIG
+    content  = "# Généré automatiquement par l'orchestrateur depuis config.yml\n---\n"
+    content += f"ansible_user: {cfg['ssh']['user']}\n"
+    content += f"ansible_ssh_private_key_file: {cfg['ssh']['key_path']}\n"
+    content += "ansible_ssh_common_args: '-o StrictHostKeyChecking=no'\n"
+    content += f"staging_dir: \"{cfg['staging_dir']}\"\n"
+    content += f"internal_subnet: \"{cfg['network']['internal_cidr']}\"\n"
+    content += "new_ips:\n"
+    for nom, svc in cfg["services"].items():
+        content += f"  {nom}: \"{svc['internal_ip']}\"\n"
+    gv_path = ANSIBLE_DIR / "group_vars" / "all.yml"
+    gv_path.write_text(content)
+    ok("group_vars/all.yml")
+
+
 def generer_inventaire(instances: dict, containers: list):
     titre("5", "9", "Generation inventaire Ansible")
 
+    ssh_user = CONFIG["ssh"]["user"]
     inventory = ""
     for nom, data in instances.items():
         inventory += f"[{nom}]\n"
-        inventory += f"{data['floating_ip']} ansible_user=ubuntu "
+        inventory += f"{data['floating_ip']} ansible_user={ssh_user} "
         inventory += f"ansible_ssh_private_key_file={SSH_KEY}\n\n"
 
     inv_path = ANSIBLE_DIR / "inventory.ini"
     inv_path.write_text(inventory)
     ok("inventory.ini")
+
+    generer_group_vars()
 
     container_map = {c.name: c for c in containers}
     for nom, data in instances.items():
@@ -383,13 +389,7 @@ def phase_backup(containers: list, credentials: dict):
 def phase_transfert(instances: dict, tmp_dir: str, state: State):
     titre("7", "9", "Transfert des archives")
 
-    service_files = {
-        "mariadb": ["app_db.sql", "sysmonitor.sql"],
-        "apache":  ["html.tar.gz", "apache2.tar.gz"],
-        "ftp":     ["ftp_ftpuser.tar.gz", "ftp_ftpuser1.tar.gz", "ftp_ftpuser2.tar.gz"],
-        "nfs":     ["nfs_shared.tar.gz"],
-        "backup":  [],
-    }
+    service_files = {nom: svc.get("transfer_files", []) for nom, svc in CONFIG["services"].items()}
 
     for nom, data in instances.items():
         floating_ip = data["floating_ip"]
@@ -408,7 +408,7 @@ def phase_transfert(instances: dict, tmp_dir: str, state: State):
             try:
                 client.connect(
                     hostname=floating_ip,
-                    username="ubuntu",
+                    username=CONFIG["ssh"]["user"],
                     key_filename=str(SSH_KEY),
                     timeout=30,
                     banner_timeout=60
@@ -420,15 +420,16 @@ def phase_transfert(instances: dict, tmp_dir: str, state: State):
                 else:
                     raise e
         
-        _, _, stderr = client.exec_command("mkdir -p /tmp/migration")
+        staging = CONFIG["staging_dir"]
+        _, _, stderr = client.exec_command(f"mkdir -p {staging}")
         if stderr.read():
-            raise Exception(f"mkdir /tmp/migration echoue sur {floating_ip}")
+            raise Exception(f"mkdir {staging} echoue sur {floating_ip}")
         sftp = client.open_sftp()
 
         for fichier in fichiers:
             src = os.path.join(tmp_dir, fichier)
             if os.path.exists(src):
-                sftp.put(src, f"/tmp/migration/{fichier}")
+                sftp.put(src, f"{staging}/{fichier}")
                 ok(f"{fichier} -> {nom}")
             else:
                 fail(f"{fichier} introuvable")

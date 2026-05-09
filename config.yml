@@ -1,0 +1,62 @@
+# ─── Authentification OpenStack ───────────────────────────────────────────────
+openstack:
+  auth_url:        "http://10.0.0.10:5000/v3"
+  region:          "RegionOne"
+  default_user:    "migration-user"
+  default_project: "migration"
+
+# ─── Réseau ───────────────────────────────────────────────────────────────────
+network:
+  provider:          "provider"
+  internal_cidr:     "10.10.10.0/24"
+  internal_gateway:  "10.10.10.1"
+  api_ip:            "10.0.0.10"
+
+# ─── Image de base ────────────────────────────────────────────────────────────
+image:
+  name: "ubuntu-22.04"
+
+# ─── SSH ──────────────────────────────────────────────────────────────────────
+ssh:
+  key_path: "~/.ssh/migration_key"
+  user:     "ubuntu"
+
+# ─── Répertoire de staging sur les instances distantes ────────────────────────
+staging_dir: "/tmp/migration"
+
+# ─── Services à migrer ────────────────────────────────────────────────────────
+# Ajouter ou retirer un bloc ici suffit pour adapter la migration à une autre infra.
+services:
+  mariadb:
+    lxc_ip:      "10.0.3.10"
+    internal_ip: "10.10.10.10"
+    flavor:      "m1.mariadb"
+    transfer_files:
+      - "app_db.sql"
+      - "sysmonitor.sql"
+  apache:
+    lxc_ip:      "10.0.3.20"
+    internal_ip: "10.10.10.20"
+    flavor:      "m1.apache"
+    transfer_files:
+      - "html.tar.gz"
+      - "apache2.tar.gz"
+  backup:
+    lxc_ip:      "10.0.3.30"
+    internal_ip: "10.10.10.30"
+    flavor:      "m1.backup"
+    transfer_files: []
+  ftp:
+    lxc_ip:      "10.0.3.40"
+    internal_ip: "10.10.10.40"
+    flavor:      "m1.ftp"
+    transfer_files:
+      - "ftp_ftpuser.tar.gz"
+      - "ftp_ftpuser1.tar.gz"
+      - "ftp_ftpuser2.tar.gz"
+  nfs:
+    lxc_ip:      "10.0.3.50"
+    internal_ip: "10.10.10.50"
+    flavor:      "m1.nfs"
+    transfer_files:
+      - "nfs_shared.tar.gz"
