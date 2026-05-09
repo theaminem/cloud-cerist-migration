@@ -1,0 +1,32 @@
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
+
+# Migration
+migration_state.json
+migration_report.json
+
+# Ansible
+ansible/inventory.ini
+ansible/host_vars/
+
+# SSH
+*.pem
+*.key
+*_key
+*_key.pub
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+src/__pycache__/
+
+# Logs
+*.log
+
+# Tmp
+/tmp/tmp*

@@ -44,7 +44,18 @@
         state: present
         login_unix_socket: /var/run/mysqld/mysqld.sock
 
-    - name: Flush privileges
+    - name: Ouverture bind-address MariaDB
+      lineinfile:
+        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        regexp: '^bind-address'
+        line: 'bind-address = 0.0.0.0'
+
+    - name: Redemarrage MariaDB
+      service:
+        name: mariadb
+        state: restarted
+   
+    - name: \Flush privileges
       community.mysql.mysql_query:
         query: "FLUSH PRIVILEGES"
         login_unix_socket: /var/run/mysqld/mysqld.sock

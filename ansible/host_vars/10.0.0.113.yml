@@ -1,6 +1,0 @@
----
-old_lxc_ip: "10.0.3.40"
-internal_ip: "10.10.10.40"
-floating_ip: "10.0.0.113"
-ftp_users: [{"username": "ftpuser", "home": "/home/ftpuser", "password_hash": ""}, {"username": "ftpuser1", "home": "/home/ftpuser1", "password_hash": ""}, {"username": "ftpuser2", "home": "/home/ftpuser2", "password_hash": ""}]
-vsftpd_config: {"chroot_local_user": true, "pasv_min_port": 40000, "pasv_max_port": 40100, "write_enable": true, "local_enable": true}

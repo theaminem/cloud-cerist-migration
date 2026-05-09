@@ -1,15 +1,32 @@
 ---
-# ─── Installation des paquets par service ────────────────────────────────────
-
 - name: Provisionnement commun
   hosts: all
   become: true
+  gather_facts: no
   tasks:
-    - name: Mise à jour du cache apt
+    - name: Desactivation reverse DNS SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?UseDNS'
+        line: 'UseDNS no'
+      register: sshd_dns
+    - name: Redemarrage sshd si modifie
+      service:
+        name: ssh
+        state: restarted
+      when: sshd_dns.changed
+    - name: Attente fin cloud-init
+      command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+    - name: Mise a jour du cache apt
       apt:
         update_cache: yes
         cache_valid_time: 3600
-
+        lock_timeout: 300
     - name: Installation des paquets communs
       apt:
         name:
@@ -17,11 +34,16 @@
           - rsync
           - ca-certificates
         state: present
+        lock_timeout: 300
 
 - name: Provisionnement MariaDB
   hosts: mariadb
   become: true
+  gather_facts: no
   tasks:
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
     - name: Installation MariaDB
       apt:
         name:
@@ -29,8 +51,8 @@
           - mariadb-client
           - python3-pymysql
         state: present
-
-    - name: Démarrage MariaDB
+        lock_timeout: 300
+    - name: Demarrage MariaDB
       service:
         name: mariadb
         state: started
@@ -39,8 +61,12 @@
 - name: Provisionnement Apache
   hosts: apache
   become: true
+  gather_facts: no
   tasks:
-    - name: Installation Apache + PHP
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+    - name: Installation Apache et PHP
       apt:
         name:
           - apache2
@@ -49,8 +75,8 @@
           - php-mysql
           - php-curl
         state: present
-
-    - name: Démarrage Apache
+        lock_timeout: 300
+    - name: Demarrage Apache
       service:
         name: apache2
         state: started
@@ -59,15 +85,19 @@
 - name: Provisionnement Backup
   hosts: backup
   become: true
+  gather_facts: no
   tasks:
-    - name: Installation mariadb-client + cron
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+    - name: Installation mariadb-client et cron
       apt:
         name:
           - mariadb-client
           - cron
         state: present
-
-    - name: Démarrage cron
+        lock_timeout: 300
+    - name: Demarrage cron
       service:
         name: cron
         state: started
@@ -76,15 +106,19 @@
 - name: Provisionnement FTP
   hosts: ftp
   become: true
+  gather_facts: no
   tasks:
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
     - name: Installation vsftpd
       apt:
         name:
           - vsftpd
           - cron
         state: present
-
-    - name: Démarrage vsftpd
+        lock_timeout: 300
+    - name: Demarrage vsftpd
       service:
         name: vsftpd
         state: started
@@ -93,7 +127,11 @@
 - name: Provisionnement NFS
   hosts: nfs
   become: true
+  gather_facts: no
   tasks:
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
     - name: Installation nfs-kernel-server
       apt:
         name:
@@ -101,8 +139,8 @@
           - nfs-common
           - cron
         state: present
-
-    - name: Démarrage nfs-kernel-server
+        lock_timeout: 300
+    - name: Demarrage nfs-kernel-server
       service:
         name: nfs-kernel-server
         state: started

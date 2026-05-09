@@ -1,5 +1,0 @@
----
-old_lxc_ip: "10.0.3.50"
-internal_ip: "10.10.10.50"
-floating_ip: "10.0.0.181"
-nfs_exports: [{"path": "/srv/nfs/shared", "subnet": "10.0.3.0/24", "options": "rw,sync,no_subtree_check"}]

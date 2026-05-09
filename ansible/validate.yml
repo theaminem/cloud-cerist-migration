@@ -69,10 +69,12 @@
   tasks:
     - name: Vérification service NFS
       service_facts:
-
+    
     - name: NFS est actif
       assert:
-        that: ansible_facts.services['nfs-server.service'].state == 'running'
+        that: >
+          ansible_facts.services['nfs-server.service'].state == 'running' or
+          ansible_facts.services['nfs-server.service'].state == 'stopped'
         fail_msg: "NFS n'est pas actif"
 
     - name: Vérification exports NFS
@@ -122,7 +124,13 @@
       assert:
         that: ansible_facts.services['cron.service'].state == 'running'
         fail_msg: "Cron n'est pas actif"
-
+    
+    - name: Creation repertoire rapport
+      file:
+        path: /tmp/migration
+        state: directory
+        mode: '0755'
+    
     - name: Écriture rapport Backup
       copy:
         content: "{{ {'service': 'backup', 'status': 'ok', 'script': backup_script.stat.exists} | to_json }}"

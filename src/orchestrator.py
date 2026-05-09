@@ -402,13 +402,24 @@ def phase_transfert(instances: dict, tmp_dir: str, state: State):
 
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(
-            hostname=floating_ip,
-            username="ubuntu",
-            key_filename=str(SSH_KEY),
-            timeout=30
-        )
 
+        # Retry connexion SSH avec banner timeout
+        for tentative in range(5):
+            try:
+                client.connect(
+                    hostname=floating_ip,
+                    username="ubuntu",
+                    key_filename=str(SSH_KEY),
+                    timeout=30,
+                    banner_timeout=60
+                )
+                break
+            except Exception as e:
+                if tentative < 4:
+                    time.sleep(10)
+                else:
+                    raise e
+        
         client.exec_command("mkdir -p /tmp/migration")
         sftp = client.open_sftp()
 
@@ -431,20 +442,23 @@ def phase_transfert(instances: dict, tmp_dir: str, state: State):
 # ─── Phase Ansible ────────────────────────────────────────────────────────────
 
 def lancer_ansible(playbook: str, inventaire: str, extra_vars: dict = None):
+    env = os.environ.copy()
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    env["ANSIBLE_FORCE_COLOR"] = "1"
+
     cmd = [
         "ansible-playbook",
         playbook,
         "-i", inventaire,
-        "--ssh-extra-args", "-o StrictHostKeyChecking=no"
     ]
     if extra_vars:
         cmd += ["--extra-vars", json.dumps(extra_vars)]
 
-    r = subprocess.run(cmd, shell=False, capture_output=True, text=True)
+    # Pas de capture_output : Ansible écrit directement sur le terminal en temps réel
+    r = subprocess.run(cmd, shell=False, text=True, timeout=1800, env=env)
     if r.returncode != 0:
-        raise Exception(f"Ansible echoue :\n{r.stderr[-500:]}\n{r.stdout[-500:]}")
+        raise Exception(f"Ansible echoue (code {r.returncode}) — voir la sortie ci-dessus")
     return r
-
 
 def phase_ansible(state: State, phase: Phase, etape_num: str,
                    etape_nom: str, playbook: str, extra_vars: dict = None):

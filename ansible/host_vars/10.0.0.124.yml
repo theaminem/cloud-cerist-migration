@@ -1,6 +1,0 @@
----
-old_lxc_ip: "10.0.3.10"
-internal_ip: "10.10.10.10"
-floating_ip: "10.0.0.124"
-databases: ["app_db", "sysmonitor"]
-old_apache_ip: "10.0.3.20"
