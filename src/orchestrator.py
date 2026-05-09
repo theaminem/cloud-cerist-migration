@@ -329,20 +329,35 @@ def phase_backup(containers: list, credentials: dict):
         info(f"Backup {c.name}...")
 
         if "mariadb" in c.services:
-            for db in c.databases:
-                r = executer_cmd([
-                    "sudo", "lxc-attach", "-n", c.name, "--",
-                    "mysqldump", "-u", "root",
-                    f"-p{credentials['mariadb_root_password']}",
-                    db.name
-                ])
-                if r.returncode == 0:
-                    dump_path = os.path.join(tmp_dir, f"{db.name}.sql")
-                    with open(dump_path, "w") as f:
-                        f.write(r.stdout)
-                    ok(f"dump {db.name}")
-                else:
-                    fail(f"dump {db.name}")
+            # Passage du mot de passe via stdin → tee, jamais dans les arguments (/proc-safe)
+            cnf = f"[mysqldump]\nuser=root\npassword={credentials['mariadb_root_password']}\n"
+            subprocess.run(
+                ["sudo", "lxc-attach", "-n", c.name, "--", "tee", "/tmp/.my.cnf"],
+                input=cnf, capture_output=True, text=True
+            )
+            subprocess.run(
+                ["sudo", "lxc-attach", "-n", c.name, "--", "chmod", "600", "/tmp/.my.cnf"],
+                capture_output=True
+            )
+            try:
+                for db in c.databases:
+                    r = executer_cmd([
+                        "sudo", "lxc-attach", "-n", c.name, "--",
+                        "mysqldump", "--defaults-extra-file=/tmp/.my.cnf",
+                        db.name
+                    ])
+                    if r.returncode == 0:
+                        dump_path = os.path.join(tmp_dir, f"{db.name}.sql")
+                        with open(dump_path, "w") as f:
+                            f.write(r.stdout)
+                        ok(f"dump {db.name}")
+                    else:
+                        fail(f"dump {db.name}")
+            finally:
+                subprocess.run(
+                    ["sudo", "lxc-attach", "-n", c.name, "--", "rm", "-f", "/tmp/.my.cnf"],
+                    capture_output=True
+                )
 
         if "apache2" in c.services:
             r = executer_cmd([
