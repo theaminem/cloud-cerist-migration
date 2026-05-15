@@ -304,8 +304,8 @@ def generer_provision_yml(containers: list):
     """Generate provision.yml dynamically — one play per detected container."""
     SVC_PKGS = {
         "mariadb":    ["mariadb-server", "mariadb-client", "python3-pymysql"],
-        "apache2":    ["apache2", "php", "libapache2-mod-php", "php-mysql", "php-curl"],
-        "vsftpd":     ["vsftpd"],
+        "apache2":    ["apache2", "php", "libapache2-mod-php", "php-mysql", "php-curl", "nfs-common"],
+        "vsftpd":     ["vsftpd", "nfs-common"],
         "nfs-server": ["nfs-kernel-server", "nfs-common"],
         # "cron" absent : cron tourne par défaut sur Ubuntu, ne sert pas à identifier un container
     }
@@ -494,7 +494,8 @@ def _restore_mariadb_play(c, apache_containers, backup_containers):
     return lines
 
 
-def _restore_apache_play(c, containers):
+def _restore_apache_play(c, containers, nfs_containers):
+    nfs_ip = _new_ip(nfs_containers[0].name) if nfs_containers else "{{ new_ips.nfs }}"
     lines = [
         "",
         f"- name: Restauration {c.name}",
@@ -506,18 +507,25 @@ def _restore_apache_play(c, containers):
         '        path: "{{ staging_dir }}"',
         "        state: directory",
         "        mode: '0700'",
-        "",
-        "    - name: Decompression archive web",
-        "      unarchive:",
-        f'        src: "{{{{ staging_dir }}}}/{c.name}_html.tar.gz"',
-        "        dest: /var/www/",
-        "        remote_src: yes",
-        "",
         "    - name: Decompression config Apache",
         "      unarchive:",
         f'        src: "{{{{ staging_dir }}}}/{c.name}_apache2.tar.gz"',
         "        dest: /etc/",
         "        remote_src: yes",
+        "",
+        "    - name: Creation du point de montage web",
+        "      file:",
+        "        path: /var/www/html",
+        "        state: directory",
+        "        mode: '0755'",
+        "",
+        "    - name: Montage persistant du code web depuis NFS",
+        "      mount:",
+        f"        src: {nfs_ip}:/srv/nfs/shared/html",
+        "        path: /var/www/html",
+        "        fstype: nfs",
+        "        opts: defaults,_netdev",
+        "        state: mounted",
     ]
 
     for other in containers:
@@ -549,7 +557,6 @@ def _restore_apache_play(c, containers):
     ] + [f"          {_new_ip(oc.name)} {oc.name}.migration.local" for oc in containers]
 
     lines += [
-        "",
         "    - name: Redemarrage Apache",
         "      service:",
         "        name: apache2",
@@ -577,8 +584,17 @@ def _restore_nfs_play(c):
         "        state: directory",
         "        mode: '0755'",
         "      loop:",
+        "        - /srv/nfs/shared",
+        "        - /srv/nfs/shared/html",
+        "        - /srv/nfs/shared/ftp_uploads",
         "        - /srv/nfs/shared/documents",
         "        - /srv/nfs/shared/scripts",
+        "",
+        "    - name: Permissions ouvertes pour le partage FTP",
+        "      file:",
+        "        path: /srv/nfs/shared/ftp_uploads",
+        "        state: directory",
+        "        mode: '0777'",
         "",
         "    - name: Decompression archive NFS",
         "      unarchive:",
@@ -588,7 +604,9 @@ def _restore_nfs_play(c):
         "",
         "    - name: Reecriture /etc/exports avec nouveau sous-reseau",
         "      copy:",
-        '        content: "/srv/nfs/shared {{ internal_subnet }}(rw,sync,no_subtree_check,root_squash)\\n"',
+        "        content: |",
+        "          /srv/nfs/shared {{ internal_subnet }}(rw,sync,no_subtree_check,root_squash)",
+        "          /srv/nfs/shared/ftp_uploads {{ internal_subnet }}(rw,sync,no_subtree_check,root_squash)",
         "        dest: /etc/exports",
         "",
         "    - name: Activation des exports NFS",
@@ -603,6 +621,8 @@ def _restore_nfs_play(c):
 
 def _restore_backup_play(c, mariadb_containers):
     mariadb_ip = _new_ip(mariadb_containers[0].name) if mariadb_containers else "{{ new_ips.mariadb }}"
+    db_name = c.backup_config.database if c.backup_config and c.backup_config.database else "app_db"
+    dest_dir = c.backup_config.destination if c.backup_config and c.backup_config.destination else "/backups"
     return [
         "",
         f"- name: Restauration {c.name}",
@@ -611,14 +631,14 @@ def _restore_backup_play(c, mariadb_containers):
         "  tasks:",
         "    - name: Creation du repertoire de destination des backups",
         "      file:",
-        "        path: /backups",
+        f"        path: {dest_dir}",
         "        state: directory",
         "        mode: '0755'",
         "",
         "    - name: Creation du fichier de configuration backup protege",
         "      copy:",
         "        content: |",
-        "          [mysqldump]",
+        "          [client]",
         "          user=appuser",
         "          password={{ mariadb_appuser_password }}",
         "        dest: /etc/backup.conf",
@@ -632,9 +652,9 @@ def _restore_backup_play(c, mariadb_containers):
         "          #!/bin/bash",
         "          DATE=$(date +%Y-%m-%d_%Hh%M)",
         f'          HOST="{mariadb_ip}"',
-        '          DB="app_db"',
-        '          DEST="/backups"',
-        "          mysqldump --defaults-extra-file=/etc/backup.conf -h $HOST $DB > $DEST/backup_$DATE.sql",
+        f'          DB="{db_name}"',
+        f'          DEST="{dest_dir}"',
+        "          mysqldump --defaults-extra-file=/etc/backup.conf --single-transaction --skip-lock-tables -h $HOST $DB > $DEST/backup_$DATE.sql",
         "          if [ $? -eq 0 ]; then",
         '              echo "Backup reussi : $DEST/backup_$DATE.sql"',
         "          else",
@@ -653,7 +673,8 @@ def _restore_backup_play(c, mariadb_containers):
     ]
 
 
-def _restore_ftp_play(c):
+def _restore_ftp_play(c, nfs_containers):
+    nfs_ip = _new_ip(nfs_containers[0].name) if nfs_containers else "{{ new_ips.nfs }}"
     return [
         "",
         f"- name: Restauration {c.name}",
@@ -676,22 +697,22 @@ def _restore_ftp_play(c):
         "        update_password: always",
         '      loop: "{{ ftp_users }}"',
         "",
-        "    - name: Creation des repertoires uploads",
+        "    - name: Creation des repertoires files",
         "      file:",
-        '        path: "{{ item.home }}/uploads"',
+        '        path: "{{ item.home }}/files"',
         "        state: directory",
         '        owner: "{{ item.username }}"',
         "        mode: '0755'",
         '      loop: "{{ ftp_users }}"',
         "",
-        "    - name: Decompression archives FTP",
-        "      unarchive:",
-        f'        src: "{{{{ staging_dir }}}}/{c.name}_ftp_{{{{ item.username }}}}.tar.gz"',
-        '        dest: "{{ item.home }}/"',
-        "        remote_src: yes",
-        '        owner: "{{ item.username }}"',
+        "    - name: Montage persistant du partage FTP depuis NFS",
+        "      mount:",
+        f"        src: {nfs_ip}:/srv/nfs/shared/ftp_uploads",
+        '        path: "{{ item.home }}/files"',
+        "        fstype: nfs",
+        "        opts: defaults,_netdev",
+        "        state: mounted",
         '      loop: "{{ ftp_users }}"',
-        "      ignore_errors: yes",
         "",
         "    - name: Configuration vsftpd",
         "      copy:",
@@ -733,20 +754,33 @@ def generer_restore_yml(containers: list, ip_mapping: dict):
     backup_containers  = [c for c in containers if c.backup_config is not None
                           and "mariadb" not in c.services]
     mariadb_containers = [c for c in containers if "mariadb" in c.services]
+    nfs_containers     = [c for c in containers if "nfs-server" in c.services]
 
     lines = ["---", "# Généré automatiquement par l'orchestrateur"]
 
-    for c in containers:
+    ordered = (
+        mariadb_containers
+        + nfs_containers
+        + apache_containers
+        + backup_containers
+        + [c for c in containers if "vsftpd" in c.services]
+    )
+    seen = set()
+
+    for c in ordered:
+        if c.name in seen:
+            continue
+        seen.add(c.name)
         if "mariadb"    in c.services:
             lines += _restore_mariadb_play(c, apache_containers, backup_containers)
         if "apache2"    in c.services:
-            lines += _restore_apache_play(c, containers)
+            lines += _restore_apache_play(c, containers, nfs_containers)
         if "nfs-server" in c.services:
             lines += _restore_nfs_play(c)
         if c.backup_config is not None and "mariadb" not in c.services:
             lines += _restore_backup_play(c, mariadb_containers)
         if "vsftpd"     in c.services:
-            lines += _restore_ftp_play(c)
+            lines += _restore_ftp_play(c, nfs_containers)
 
     (ANSIBLE_DIR / "restore.yml").write_text("\n".join(lines) + "\n")
     ok("restore.yml")
@@ -817,6 +851,11 @@ def _validate_apache_play(c, containers):
         "        status_code: 200",
         "      register: http_check",
         "",
+        "    - name: Verification montage NFS du code web",
+        "      shell: mount | grep ' /var/www/html ' | grep nfs",
+        "      register: apache_mount",
+        "      changed_when: false",
+        "",
         "    - name: Verification absence anciennes IPs LXC",
         '      shell: grep -rE "10\\.0\\." /var/www/html/config.php || echo "OK"',
         "      register: ip_check",
@@ -858,6 +897,26 @@ def _validate_nfs_play(c):
         "        recurse: yes",
         "      register: nfs_files",
         "",
+        "    - name: Verification presence du code web partage",
+        "      stat:",
+        "        path: /srv/nfs/shared/html/index.php",
+        "      register: nfs_web",
+        "",
+        "    - name: Code web partage present",
+        "      assert:",
+        "        that: nfs_web.stat.exists",
+        "        fail_msg: \"Le code web partage est absent sur NFS\"",
+        "",
+        "    - name: Verification presence du partage FTP",
+        "      stat:",
+        "        path: /srv/nfs/shared/ftp_uploads",
+        "      register: nfs_ftp",
+        "",
+        "    - name: Partage FTP present sur NFS",
+        "      assert:",
+        "        that: nfs_ftp.stat.exists",
+        "        fail_msg: \"Le partage FTP est absent sur NFS\"",
+        "",
         "    - name: Creation repertoire rapport",
         "      file:",
         "        path: /tmp/migration",
@@ -873,6 +932,7 @@ def _validate_nfs_play(c):
 
 def _validate_backup_play(c, mariadb_containers):
     mariadb_ip = _new_ip(mariadb_containers[0].name) if mariadb_containers else "{{ new_ips.mariadb }}"
+    db_name = c.backup_config.database if c.backup_config and c.backup_config.database else "app_db"
     return [
         "",
         f"- name: Validation {c.name}",
@@ -897,6 +957,24 @@ def _validate_backup_play(c, mariadb_containers):
         "      assert:",
         "        that: ip_in_backup.rc == 0",
         "        fail_msg: \"La nouvelle IP mariadb est absente de backup.sh\"",
+        "",
+        "    - name: Verification options mysqldump sans lock",
+        "      shell: grep -- '--single-transaction --skip-lock-tables' /usr/local/bin/backup.sh",
+        "      register: backup_opts",
+        "",
+        "    - name: Options mysqldump presentes",
+        "      assert:",
+        "        that: backup_opts.rc == 0",
+        "        fail_msg: \"Le script backup.sh n'utilise pas les options mysqldump attendues\"",
+        "",
+        f"    - name: Verification base {db_name} dans backup.sh",
+        f"      shell: grep 'DB=\"{db_name}\"' /usr/local/bin/backup.sh",
+        "      register: backup_db",
+        "",
+        "    - name: Base cible correcte dans backup.sh",
+        "      assert:",
+        "        that: backup_db.rc == 0",
+        "        fail_msg: \"La base cible attendue est absente de backup.sh\"",
         "",
         "    - name: Verification cron actif",
         "      service_facts:",
@@ -934,11 +1012,17 @@ def _validate_ftp_play(c):
         "        that: ansible_facts.services['vsftpd.service'].state == 'running'",
         "        fail_msg: \"vsftpd n'est pas actif\"",
         "",
-        "    - name: Verification repertoires users FTP",
+        "    - name: Verification repertoires files des users FTP",
         "      stat:",
-        '        path: "{{ item.home }}/uploads"',
+        '        path: "{{ item.home }}/files"',
         '      loop: "{{ ftp_users }}"',
         "      register: ftp_dirs",
+        "",
+        "    - name: Verification montage NFS sur files",
+        "      shell: mount | grep ' {{ item.home }}/files ' | grep nfs",
+        '      loop: "{{ ftp_users }}"',
+        "      register: ftp_mounts",
+        "      changed_when: false",
         "",
         "    - name: Creation repertoire rapport",
         "      file:",
