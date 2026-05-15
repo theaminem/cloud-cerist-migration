@@ -1,4 +1,6 @@
 ---
+# Généré automatiquement par l'orchestrateur
+
 - name: Provisionnement commun
   hosts: all
   become: true
@@ -36,29 +38,7 @@
         state: present
         lock_timeout: 300
 
-- name: Provisionnement MariaDB
-  hosts: mariadb
-  become: true
-  gather_facts: no
-  tasks:
-    - name: Attente liberation verrou apt
-      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
-      changed_when: false
-    - name: Installation MariaDB
-      apt:
-        name:
-          - mariadb-server
-          - mariadb-client
-          - python3-pymysql
-        state: present
-        lock_timeout: 300
-    - name: Demarrage MariaDB
-      service:
-        name: mariadb
-        state: started
-        enabled: true
-
-- name: Provisionnement Apache
+- name: Provisionnement apache
   hosts: apache
   become: true
   gather_facts: no
@@ -66,7 +46,7 @@
     - name: Attente liberation verrou apt
       shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
       changed_when: false
-    - name: Installation Apache et PHP
+    - name: Installation paquets apache
       apt:
         name:
           - apache2
@@ -76,13 +56,13 @@
           - php-curl
         state: present
         lock_timeout: 300
-    - name: Demarrage Apache
+    - name: Demarrage apache2
       service:
         name: apache2
         state: started
         enabled: true
 
-- name: Provisionnement Backup
+- name: Provisionnement backup
   hosts: backup
   become: true
   gather_facts: no
@@ -90,20 +70,15 @@
     - name: Attente liberation verrou apt
       shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
       changed_when: false
-    - name: Installation mariadb-client et cron
+    - name: Installation paquets backup
       apt:
         name:
           - mariadb-client
           - cron
         state: present
         lock_timeout: 300
-    - name: Demarrage cron
-      service:
-        name: cron
-        state: started
-        enabled: true
 
-- name: Provisionnement FTP
+- name: Provisionnement ftp
   hosts: ftp
   become: true
   gather_facts: no
@@ -111,11 +86,10 @@
     - name: Attente liberation verrou apt
       shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
       changed_when: false
-    - name: Installation vsftpd
+    - name: Installation paquets ftp
       apt:
         name:
           - vsftpd
-          - cron
         state: present
         lock_timeout: 300
     - name: Demarrage vsftpd
@@ -124,7 +98,29 @@
         state: started
         enabled: true
 
-- name: Provisionnement NFS
+- name: Provisionnement mariadb
+  hosts: mariadb
+  become: true
+  gather_facts: no
+  tasks:
+    - name: Attente liberation verrou apt
+      shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+    - name: Installation paquets mariadb
+      apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+          - python3-pymysql
+        state: present
+        lock_timeout: 300
+    - name: Demarrage mariadb
+      service:
+        name: mariadb
+        state: started
+        enabled: true
+
+- name: Provisionnement nfs
   hosts: nfs
   become: true
   gather_facts: no
@@ -132,12 +128,11 @@
     - name: Attente liberation verrou apt
       shell: while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done
       changed_when: false
-    - name: Installation nfs-kernel-server
+    - name: Installation paquets nfs
       apt:
         name:
           - nfs-kernel-server
           - nfs-common
-          - cron
         state: present
         lock_timeout: 300
     - name: Demarrage nfs-kernel-server

@@ -1,43 +1,11 @@
 ---
-# ─── Validation MariaDB ───────────────────────────────────────────────────────
+# Généré automatiquement par l'orchestrateur
 
-- name: Validation MariaDB
-  hosts: mariadb
-  become: true
-  tasks:
-    - name: Vérification service MariaDB
-      service_facts:
-
-    - name: MariaDB est actif
-      assert:
-        that: ansible_facts.services['mariadb.service'].state == 'running'
-        fail_msg: "MariaDB n'est pas actif"
-
-    - name: Vérification bases de données
-      community.mysql.mysql_query:
-        query: "SHOW DATABASES LIKE '{{ item }}'"
-        login_unix_socket: /var/run/mysqld/mysqld.sock
-      loop: "{{ databases }}"
-      register: db_check
-
-    - name: Vérification user appuser
-      community.mysql.mysql_query:
-        query: "SELECT user, host FROM mysql.user WHERE user='appuser'"
-        login_unix_socket: /var/run/mysqld/mysqld.sock
-      register: user_check
-
-    - name: Écriture rapport MariaDB
-      copy:
-        content: "{{ {'service': 'mariadb', 'status': 'ok', 'databases': databases} | to_json }}"
-        dest: /tmp/migration/validation_mariadb.json
-
-# ─── Validation Apache ────────────────────────────────────────────────────────
-
-- name: Validation Apache
+- name: Validation apache
   hosts: apache
   become: true
   tasks:
-    - name: Vérification service Apache
+    - name: Verification service Apache
       service_facts:
 
     - name: Apache est actif
@@ -52,56 +20,27 @@
         status_code: 200
       register: http_check
 
-    - name: Vérification absence anciennes IPs LXC
-      shell: grep -r "10\.0\.3\." /var/www/html/config.php || echo "OK"
+    - name: Verification absence anciennes IPs LXC
+      shell: grep -rE "10\.0\." /var/www/html/config.php || echo "OK"
       register: ip_check
+      changed_when: false
 
-    - name: Écriture rapport Apache
+    - name: Creation repertoire rapport
+      file:
+        path: /tmp/migration
+        state: directory
+        mode: '0755'
+
+    - name: Ecriture rapport Apache
       copy:
         content: "{{ {'service': 'apache', 'status': 'ok', 'http_code': http_check.status} | to_json }}"
         dest: /tmp/migration/validation_apache.json
 
-# ─── Validation NFS ───────────────────────────────────────────────────────────
-
-- name: Validation NFS
-  hosts: nfs
-  become: true
-  tasks:
-    - name: Vérification service NFS
-      service_facts:
-    
-    - name: NFS est actif
-      command: exportfs -v
-      register: nfs_exports_check
-      changed_when: false
-
-    - name: NFS exporte au moins un repertoire
-      assert:
-        that: nfs_exports_check.stdout | length > 0
-        fail_msg: "NFS n'exporte rien"
-
-    - name: Vérification exports NFS
-      command: exportfs -v
-      register: exports_check
-
-    - name: Vérification fichiers partagés
-      find:
-        paths: /srv/nfs/shared
-        recurse: yes
-      register: nfs_files
-
-    - name: Écriture rapport NFS
-      copy:
-        content: "{{ {'service': 'nfs', 'status': 'ok', 'exports': exports_check.stdout, 'files_count': nfs_files.matched} | to_json }}"
-        dest: /tmp/migration/validation_nfs.json
-
-# ─── Validation Backup ────────────────────────────────────────────────────────
-
-- name: Validation Backup
+- name: Validation backup
   hosts: backup
   become: true
   tasks:
-    - name: Vérification script backup.sh
+    - name: Verification script backup.sh
       stat:
         path: /usr/local/bin/backup.sh
       register: backup_script
@@ -111,41 +50,39 @@
         that: backup_script.stat.exists
         fail_msg: "backup.sh est absent"
 
-    - name: Vérification nouvelle IP dans backup.sh
+    - name: Verification nouvelle IP mariadb dans backup.sh
       shell: grep "{{ new_ips.mariadb }}" /usr/local/bin/backup.sh
       register: ip_in_backup
 
-    - name: Nouvelle IP mariadb présente dans backup.sh
+    - name: Nouvelle IP mariadb presente dans backup.sh
       assert:
         that: ip_in_backup.rc == 0
         fail_msg: "La nouvelle IP mariadb est absente de backup.sh"
 
-    - name: Vérification cron actif
+    - name: Verification cron actif
       service_facts:
 
     - name: Cron est actif
       assert:
         that: ansible_facts.services['cron.service'].state == 'running'
         fail_msg: "Cron n'est pas actif"
-    
+
     - name: Creation repertoire rapport
       file:
         path: /tmp/migration
         state: directory
         mode: '0755'
-    
-    - name: Écriture rapport Backup
+
+    - name: Ecriture rapport Backup
       copy:
         content: "{{ {'service': 'backup', 'status': 'ok', 'script': backup_script.stat.exists} | to_json }}"
         dest: /tmp/migration/validation_backup.json
 
-# ─── Validation FTP ───────────────────────────────────────────────────────────
-
-- name: Validation FTP
+- name: Validation ftp
   hosts: ftp
   become: true
   tasks:
-    - name: Vérification service vsftpd
+    - name: Verification service vsftpd
       service_facts:
 
     - name: vsftpd est actif
@@ -153,13 +90,86 @@
         that: ansible_facts.services['vsftpd.service'].state == 'running'
         fail_msg: "vsftpd n'est pas actif"
 
-    - name: Vérification répertoires users FTP
+    - name: Verification repertoires users FTP
       stat:
         path: "{{ item.home }}/uploads"
       loop: "{{ ftp_users }}"
       register: ftp_dirs
 
-    - name: Écriture rapport FTP
+    - name: Creation repertoire rapport
+      file:
+        path: /tmp/migration
+        state: directory
+        mode: '0755'
+
+    - name: Ecriture rapport FTP
       copy:
         content: "{{ {'service': 'ftp', 'status': 'ok'} | to_json }}"
         dest: /tmp/migration/validation_ftp.json
+
+- name: Validation mariadb
+  hosts: mariadb
+  become: true
+  tasks:
+    - name: Verification service MariaDB
+      service_facts:
+
+    - name: MariaDB est actif
+      assert:
+        that: ansible_facts.services['mariadb.service'].state == 'running'
+        fail_msg: "MariaDB n'est pas actif"
+
+    - name: Verification bases de données
+      community.mysql.mysql_query:
+        query: "SHOW DATABASES LIKE '{{ item }}'"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      loop: "{{ databases }}"
+      register: db_check
+
+    - name: Verification user appuser
+      community.mysql.mysql_query:
+        query: "SELECT user, host FROM mysql.user WHERE user='appuser'"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      register: user_check
+
+    - name: Creation repertoire rapport
+      file:
+        path: /tmp/migration
+        state: directory
+        mode: '0755'
+
+    - name: Ecriture rapport MariaDB
+      copy:
+        content: "{{ {'service': 'mariadb', 'status': 'ok', 'databases': databases} | to_json }}"
+        dest: /tmp/migration/validation_mariadb.json
+
+- name: Validation nfs
+  hosts: nfs
+  become: true
+  tasks:
+    - name: Verification exports NFS
+      command: exportfs -v
+      register: nfs_exports_check
+      changed_when: false
+
+    - name: NFS exporte au moins un repertoire
+      assert:
+        that: nfs_exports_check.stdout | length > 0
+        fail_msg: "NFS n'exporte rien"
+
+    - name: Verification fichiers partages
+      find:
+        paths: /srv/nfs/shared
+        recurse: yes
+      register: nfs_files
+
+    - name: Creation repertoire rapport
+      file:
+        path: /tmp/migration
+        state: directory
+        mode: '0755'
+
+    - name: Ecriture rapport NFS
+      copy:
+        content: "{{ {'service': 'nfs', 'status': 'ok', 'files_count': nfs_files.matched} | to_json }}"
+        dest: /tmp/migration/validation_nfs.json

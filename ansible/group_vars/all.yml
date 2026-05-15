@@ -6,8 +6,8 @@ ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
 staging_dir: "/tmp/migration"
 internal_subnet: "10.10.10.0/24"
 new_ips:
-  mariadb: "10.10.10.10"
-  apache: "10.10.10.20"
-  backup: "10.10.10.30"
-  ftp: "10.10.10.40"
+  apache: "10.10.10.10"
+  backup: "10.10.10.20"
+  ftp: "10.10.10.30"
+  mariadb: "10.10.10.40"
   nfs: "10.10.10.50"

@@ -80,6 +80,23 @@ def attendre_ssh(ip: str, timeout: int = 120):
 
 # ─── Prérequis ────────────────────────────────────────────────────────────────
 
+def reinitialiser_haproxy():
+    """Remet HAProxy sur lxc_backend avant la migration."""
+    haproxy_cfg = "/etc/haproxy/haproxy.cfg"
+    try:
+        with open(haproxy_cfg, "r") as f:
+            contenu = f.read()
+        contenu = contenu.replace(
+            "default_backend cloud_backend",
+            "default_backend lxc_backend"
+        )
+        with open(haproxy_cfg, "w") as f:
+            f.write(contenu)
+        subprocess.run(["sudo", "systemctl", "reload", "haproxy"], check=True)
+        ok("HAProxy remis sur lxc_backend")
+    except Exception as e:
+        fail(f"HAProxy reinitialisation echouee : {e}")
+
 def verifier_prerequis():
     titre("1", "9", "Verification des prerequis")
     erreurs = []
@@ -1229,6 +1246,33 @@ def rollback(state: State, erreur: str):
 
 # ─── Rapport final ────────────────────────────────────────────────────────────
 
+def basculer_haproxy(floating_ip_apache: str):
+    """Bascule HAProxy vers l instance OpenStack apache apres migration."""
+    haproxy_cfg = "/etc/haproxy/haproxy.cfg"
+    try:
+        with open(haproxy_cfg, "r") as f:
+            contenu = f.read()
+        # Mettre a jour l IP du backend cloud
+        import re
+        contenu = re.sub(
+            r"server apache_cloud \S+",
+            f"server apache_cloud {floating_ip_apache}:80 check",
+            contenu
+        )
+        # Basculer vers cloud_backend
+        contenu = contenu.replace(
+            "default_backend lxc_backend",
+            "default_backend cloud_backend"
+        )
+        with open(haproxy_cfg, "w") as f:
+            f.write(contenu)
+        import subprocess
+        subprocess.run(["sudo", "systemctl", "reload", "haproxy"], check=True)
+        ok("HAProxy bascule vers instance apache OpenStack")
+    except Exception as e:
+        fail(f"HAProxy bascule echouee : {e}")
+
+
 def generer_rapport(state: State, instances: dict):
     titre("9", "9", "Rapport final")
 
@@ -1255,6 +1299,9 @@ def generer_rapport(state: State, instances: dict):
     rapport_path = BASE_DIR / "migration_report.json"
     rapport_path.write_text(json.dumps(rapport, indent=2))
     print(f"\n  Rapport ecrit : {rapport_path}")
+    apache_floating_ip = instances.get("apache", {}).get("floating_ip", "")
+    if apache_floating_ip:
+        basculer_haproxy(apache_floating_ip)
     print("\n=== Migration terminee avec succes ===\n")
 
 
@@ -1269,6 +1316,7 @@ def main():
 
     try:
         verifier_prerequis()
+        reinitialiser_haproxy()
         credentials = collecter_credentials()
 
         if state.phase.value <= Phase.SCAN.value:
